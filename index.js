@@ -1,6 +1,5 @@
 const PORT = 4000;
-
-const express = require("express")
+const express = require("express");
 const cheerio = require("cheerio");
 const axios = require("axios");
 const puppeteer = require('puppeteer');
@@ -11,38 +10,52 @@ app.get("/", (req, res) => {
   res.json("This is an API data!");
 });
 
-app.get("/news", async (req, res) => {
-  const url = 'https://www.bbc.co.uk/search?q=Ai+new&d=HOMEPAGE_GNL';
+app.get("/news", (req, res) => {
+  const urlList = [
+    'https://www.bbc.co.uk/search?q=Ai+new&d=HOMEPAGE_GNL',
+    'https://www.bbc.co.uk/search?q=Ai+new&d=HOMEPAGE_GNL&page=2'
+  ];
 
-  // Get the list of image sources using Puppeteer
-  const browser = await puppeteer.launch({ headless: 'new' });
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: 'networkidle2' }); // wait for page to load
-  const imgList = await page.$$eval('img', imgs => imgs.map(img => img.src));
-  await browser.close();
+  const browserPromise = puppeteer.launch({ headless: 'new' });
 
-  // Get the list of data from `a` tags using Cheerio
-  const dataList = [];
-  axios.get(url).then((response) => {
-    const html = response.data
-    const $ = cheerio.load(html);
-
-    $('a:contains("AI")').each(function() {
-      const title = $(this).text();
-      const url = $(this).attr('href');
-      const para = $(this).next('p').text();
-
-      dataList.push({ title, url, para });
+  Promise.all(urlList.map(url => processURL(url, browserPromise)))
+    .then(newsList => {
+      res.json(newsList);
+    })
+    .catch(error => {
+      console.error(error);
+      res.status(500).json("Internal server error");
     });
-
-    // Combine the list of image sources and the list of data
-    const newsList = imgList.map((src, index) => {
-      const data = dataList[index];
-      return { ...data, imgSrc: src };
-    });
-
-    res.json(newsList);
-  }).catch((e) => console.log(e));
 });
 
-app.listen(PORT, () => console.log(`server is running on PORT ${PORT}`));
+async function processURL(url, browserPromise) {
+  const browser = await browserPromise;
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: 'networkidle2' });
+
+  const imgList = await page.$$eval('img', imgs => imgs.map(img => img.src));
+  await page.close();
+
+  const response = await axios.get(url, { timeout: 10000 });
+  const html = response.data;
+  const $ = cheerio.load(html);
+
+  const dataList = [];
+
+  $('a:contains("AI")').each(function() {
+    const title = $(this).text();
+    const url = $(this).attr('href');
+    const para = $(this).next('p').text();
+
+    dataList.push({ title, url, para });
+  });
+
+  const combinedList = imgList.map((src, index) => {
+    const data = dataList[index];
+    return { ...data, imgSrc: src };
+  });
+
+  return combinedList;
+}
+
+app.listen(PORT, () => console.log(`Server is running on PORT ${PORT}`));
